@@ -30,13 +30,13 @@ export interface ExecuteTransactionParams {
 @Injectable()
 export class SorobanTransactionLifecycleService {
   private readonly logger = new Logger(SorobanTransactionLifecycleService.name);
-  
+
   // Exponential backoff configuration
   private readonly BASE_RETRY_DELAY_MS = 2000; // 2 seconds
   private readonly MAX_RETRY_DELAY_MS = 300000; // 5 minutes
   private readonly BACKOFF_MULTIPLIER = 2;
   private readonly JITTER_MAX_MS = 1000;
-  
+
   // Transaction expiry time
   private readonly TRANSACTION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -97,7 +97,10 @@ export class SorobanTransactionLifecycleService {
     }
 
     // Check if transaction should be retried
-    if (!transaction.isRetryable || transaction.attemptCount >= transaction.maxAttempts) {
+    if (
+      !transaction.isRetryable ||
+      transaction.attemptCount >= transaction.maxAttempts
+    ) {
       this.logger.warn('Transaction cannot be retried', {
         transactionId,
         attemptCount: transaction.attemptCount,
@@ -120,37 +123,42 @@ export class SorobanTransactionLifecycleService {
 
     try {
       // Update transaction status to submitted
-      await this.updateTransactionStatus(transactionId, SorobanTransactionStatus.submitted);
+      await this.updateTransactionStatus(
+        transactionId,
+        SorobanTransactionStatus.submitted,
+      );
 
       // Execute the transaction based on operation type
       let result;
       switch (transaction.operation) {
         case SorobanOperationType.create_claim:
           result = await this.onchainAdapter.createClaim({
-            operatorAddress: transaction.operatorAddress!,
-            packageId: transaction.packageId!,
+            claimId: transaction.claimId!,
             recipientAddress: transaction.recipientAddress!,
             amount: transaction.amount!,
             tokenAddress: transaction.tokenAddress!,
             expiresAt: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60, // 30 days
           });
           break;
-          
+
         case SorobanOperationType.disburse_claim:
           result = await this.onchainAdapter.disburse({
+            claimId: transaction.claimId!,
             packageId: transaction.packageId!,
-            operatorAddress: transaction.operatorAddress!,
+            tokenAddress: transaction.tokenAddress!,
           });
           break;
-          
+
         case SorobanOperationType.init_escrow:
           result = await this.onchainAdapter.initEscrow({
             adminAddress: transaction.operatorAddress!,
           });
           break;
-          
+
         default:
-          throw new Error(`Unsupported operation: ${transaction.operation}`);
+          throw new Error(
+            `Unsupported operation: ${transaction.operation as string}`,
+          );
       }
 
       // Transaction successful - update with confirmed status
@@ -186,9 +194,13 @@ export class SorobanTransactionLifecycleService {
         duration,
         attemptNumber,
       });
-
     } catch (error) {
-      await this.handleTransactionError(transactionId, error, attemptNumber, startTime);
+      await this.handleTransactionError(
+        transactionId,
+        error,
+        attemptNumber,
+        startTime,
+      );
     }
   }
 
@@ -220,7 +232,9 @@ export class SorobanTransactionLifecycleService {
     });
 
     if (!transaction) {
-      throw new Error(`Transaction ${transactionId} not found during error handling`);
+      throw new Error(
+        `Transaction ${transactionId} not found during error handling`,
+      );
     }
 
     const shouldRetry = isRetryable && attemptNumber < transaction.maxAttempts;
@@ -228,7 +242,9 @@ export class SorobanTransactionLifecycleService {
 
     if (shouldRetry) {
       // Calculate exponential backoff with jitter
-      const baseDelay = this.BASE_RETRY_DELAY_MS * Math.pow(this.BACKOFF_MULTIPLIER, attemptNumber - 1);
+      const baseDelay =
+        this.BASE_RETRY_DELAY_MS *
+        Math.pow(this.BACKOFF_MULTIPLIER, attemptNumber - 1);
       const jitter = Math.random() * this.JITTER_MAX_MS;
       const delay = Math.min(baseDelay + jitter, this.MAX_RETRY_DELAY_MS);
       nextRetryAt = new Date(Date.now() + delay);
@@ -251,7 +267,9 @@ export class SorobanTransactionLifecycleService {
     await this.prisma.sorobanTransaction.update({
       where: { id: transactionId },
       data: {
-        status: shouldRetry ? SorobanTransactionStatus.pending : SorobanTransactionStatus.failed,
+        status: shouldRetry
+          ? SorobanTransactionStatus.pending
+          : SorobanTransactionStatus.failed,
         attemptCount: attemptNumber,
         lastRetryAt: new Date(),
         lastError: errorMessage,
@@ -276,26 +294,38 @@ export class SorobanTransactionLifecycleService {
     });
 
     if (!shouldRetry) {
-      this.metricsService.incrementCounter('soroban_transaction_permanent_failure', {
-        operation: transaction.operation,
-        errorType: errorType || 'unknown',
-      });
+      this.metricsService.incrementCounter(
+        'soroban_transaction_permanent_failure',
+        {
+          operation: transaction.operation,
+          errorType: errorType || 'unknown',
+        },
+      );
     }
   }
 
   /**
    * Classify errors to determine if they are retryable
    */
-  private classifyError(errorMessage: string): { errorType: RetryableErrorType | null; isRetryable: boolean } {
+  private classifyError(errorMessage: string): {
+    errorType: RetryableErrorType | null;
+    isRetryable: boolean;
+  } {
     const lowerError = errorMessage.toLowerCase();
 
     // Network and timeout errors - retryable
     if (lowerError.includes('timeout') || lowerError.includes('network')) {
-      return { errorType: RetryableErrorType.network_timeout, isRetryable: true };
+      return {
+        errorType: RetryableErrorType.network_timeout,
+        isRetryable: true,
+      };
     }
 
     // Rate limiting - retryable
-    if (lowerError.includes('rate limit') || lowerError.includes('too many requests')) {
+    if (
+      lowerError.includes('rate limit') ||
+      lowerError.includes('too many requests')
+    ) {
       return { errorType: RetryableErrorType.rate_limit, isRetryable: true };
     }
 
@@ -310,13 +340,22 @@ export class SorobanTransactionLifecycleService {
     }
 
     // Fee issues - retryable
-    if (lowerError.includes('insufficient fee') || lowerError.includes('fee too low')) {
-      return { errorType: RetryableErrorType.insufficient_fee, isRetryable: true };
+    if (
+      lowerError.includes('insufficient fee') ||
+      lowerError.includes('fee too low')
+    ) {
+      return {
+        errorType: RetryableErrorType.insufficient_fee,
+        isRetryable: true,
+      };
     }
 
     // Temporary failures - retryable
     if (lowerError.includes('temporary') || lowerError.includes('retry')) {
-      return { errorType: RetryableErrorType.temporary_failure, isRetryable: true };
+      return {
+        errorType: RetryableErrorType.temporary_failure,
+        isRetryable: true,
+      };
     }
 
     // Non-retryable errors (invalid parameters, insufficient balance, contract errors, etc.)
@@ -334,9 +373,15 @@ export class SorobanTransactionLifecycleService {
       where: { id: transactionId },
       data: {
         status,
-        ...(status === SorobanTransactionStatus.submitted && { submittedAt: new Date() }),
-        ...(status === SorobanTransactionStatus.confirmed && { confirmedAt: new Date() }),
-        ...(status === SorobanTransactionStatus.failed && { failedAt: new Date() }),
+        ...(status === SorobanTransactionStatus.submitted && {
+          submittedAt: new Date(),
+        }),
+        ...(status === SorobanTransactionStatus.confirmed && {
+          confirmedAt: new Date(),
+        }),
+        ...(status === SorobanTransactionStatus.failed && {
+          failedAt: new Date(),
+        }),
       },
     });
   }
@@ -346,7 +391,7 @@ export class SorobanTransactionLifecycleService {
    */
   async getRetryableTransactions(): Promise<any[]> {
     const now = new Date();
-    
+
     return this.prisma.sorobanTransaction.findMany({
       where: {
         status: SorobanTransactionStatus.pending,
@@ -370,11 +415,14 @@ export class SorobanTransactionLifecycleService {
    */
   async markExpiredTransactions(): Promise<number> {
     const expiredAt = new Date(Date.now() - this.TRANSACTION_EXPIRY_MS);
-    
+
     const result = await this.prisma.sorobanTransaction.updateMany({
       where: {
         status: {
-          in: [SorobanTransactionStatus.pending, SorobanTransactionStatus.submitted],
+          in: [
+            SorobanTransactionStatus.pending,
+            SorobanTransactionStatus.submitted,
+          ],
         },
         createdAt: {
           lt: expiredAt,
@@ -444,7 +492,9 @@ export class SorobanTransactionLifecycleService {
         throw new Error(`Transaction ${transactionId} is not retryable`);
       }
       if (transaction.attemptCount >= transaction.maxAttempts) {
-        throw new Error(`Transaction ${transactionId} has exceeded maximum attempts`);
+        throw new Error(
+          `Transaction ${transactionId} has exceeded maximum attempts`,
+        );
       }
     }
 

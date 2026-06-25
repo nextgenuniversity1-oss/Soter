@@ -10,6 +10,7 @@ export class MetricsService {
   private sorobanTransactionLatency?: Histogram<string>;
   private readonly dynamicCounters = new Map<string, Counter<string>>();
   private readonly dynamicGauges = new Map<string, Gauge<string>>();
+  private readonly dynamicHistograms = new Map<string, Histogram<string>>();
 
   constructor(
     @InjectMetric('http_requests_total')
@@ -240,8 +241,7 @@ export class MetricsService {
   ): void {
     // Create dynamic histogram if it doesn't exist
     if (!this.sorobanTransactionLatency) {
-      const prometheus = require('prom-client');
-      this.sorobanTransactionLatency = new prometheus.Histogram({
+      this.sorobanTransactionLatency = new Histogram({
         name: 'soroban_transaction_duration_seconds',
         help: 'Duration of Soroban transaction operations with lifecycle tracking',
         labelNames: ['operation', 'status'],
@@ -263,12 +263,14 @@ export class MetricsService {
    */
   incrementCounter(name: string, labels?: Record<string, string>): void {
     if (!this.dynamicCounters.has(name)) {
-      const prometheus = require('prom-client');
-      this.dynamicCounters.set(name, new prometheus.Counter({
+      this.dynamicCounters.set(
         name,
-        help: `Counter for ${name}`,
-        labelNames: labels ? Object.keys(labels) : [],
-      }));
+        new Counter({
+          name,
+          help: `Counter for ${name}`,
+          labelNames: labels ? Object.keys(labels) : [],
+        }),
+      );
     }
 
     const counter = this.dynamicCounters.get(name)!;
@@ -280,12 +282,14 @@ export class MetricsService {
    */
   setGauge(name: string, value: number, labels?: Record<string, string>): void {
     if (!this.dynamicGauges.has(name)) {
-      const prometheus = require('prom-client');
-      this.dynamicGauges.set(name, new prometheus.Gauge({
+      this.dynamicGauges.set(
         name,
-        help: `Gauge for ${name}`,
-        labelNames: labels ? Object.keys(labels) : [],
-      }));
+        new Gauge({
+          name,
+          help: `Gauge for ${name}`,
+          labelNames: labels ? Object.keys(labels) : [],
+        }),
+      );
     }
 
     const gauge = this.dynamicGauges.get(name)!;
@@ -299,19 +303,25 @@ export class MetricsService {
   /**
    * Record histogram metrics for duration tracking
    */
-  recordHistogram(name: string, value: number, labels?: Record<string, string>): void {
+  recordHistogram(
+    name: string,
+    value: number,
+    labels?: Record<string, string>,
+  ): void {
     const key = `${name}_histogram`;
-    if (!this.dynamicCounters.has(key)) {
-      const prometheus = require('prom-client');
-      this.dynamicCounters.set(key, new prometheus.Histogram({
-        name,
-        help: `Histogram for ${name}`,
-        labelNames: labels ? Object.keys(labels) : [],
-        buckets: [0.1, 0.5, 1, 2, 5, 10, 30, 60],
-      }));
+    if (!this.dynamicHistograms.has(key)) {
+      this.dynamicHistograms.set(
+        key,
+        new Histogram({
+          name,
+          help: `Histogram for ${name}`,
+          labelNames: labels ? Object.keys(labels) : [],
+          buckets: [0.1, 0.5, 1, 2, 5, 10, 30, 60],
+        }),
+      );
     }
 
-    const histogram = this.dynamicCounters.get(key)!;
+    const histogram = this.dynamicHistograms.get(key)!;
     histogram.observe(labels || {}, value);
   }
 }

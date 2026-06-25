@@ -47,15 +47,19 @@ export class SorobanTransactionProcessor extends WorkerHost {
       switch (operation) {
         case 'execute':
         case 'retry':
-          await this.sorobanTransactionService.executeTransaction(transactionId);
+          await this.sorobanTransactionService.executeTransaction(
+            transactionId,
+          );
           break;
-          
+
         case 'cleanup':
           await this.sorobanTransactionService.markExpiredTransactions();
           break;
-          
+
         default:
-          throw new Error(`Unknown Soroban transaction operation: ${operation}`);
+          throw new Error(
+            `Unknown Soroban transaction operation: ${operation as string}`,
+          );
       }
 
       const duration = (Date.now() - startTime) / 1000;
@@ -63,10 +67,13 @@ export class SorobanTransactionProcessor extends WorkerHost {
       // Get updated transaction status if not cleanup operation
       let txHash: string | undefined;
       if (operation !== 'cleanup') {
-        const transaction = await this.sorobanTransactionService.getTransactionStatus(transactionId);
+        const transaction =
+          await this.sorobanTransactionService.getTransactionStatus(
+            transactionId,
+          );
         txHash = transaction?.txHash || undefined;
       }
-      
+
       this.metricsService.recordHistogram(
         'soroban_job_processing_duration',
         duration,
@@ -78,21 +85,18 @@ export class SorobanTransactionProcessor extends WorkerHost {
         transactionId,
         txHash,
       };
-
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       const duration = (Date.now() - startTime) / 1000;
 
-      this.logger.error(
-        `Soroban transaction job failed: ${errorMessage}`,
-        {
-          jobId: job.id,
-          transactionId,
-          operation,
-          error: errorMessage,
-          duration,
-        },
-      );
+      this.logger.error(`Soroban transaction job failed: ${errorMessage}`, {
+        jobId: job.id,
+        transactionId,
+        operation,
+        error: errorMessage,
+        duration,
+      });
 
       this.metricsService.recordHistogram(
         'soroban_job_processing_duration',
@@ -114,7 +118,9 @@ export class SorobanTransactionProcessor extends WorkerHost {
   }
 
   @OnWorkerEvent('completed')
-  onCompleted(job: Job<SorobanTransactionJobData, SorobanTransactionJobResult>) {
+  onCompleted(
+    job: Job<SorobanTransactionJobData, SorobanTransactionJobResult>,
+  ) {
     this.logger.log(`Soroban transaction job completed: ${job.id}`, {
       transactionId: job.data.transactionId,
       operation: job.data.operation,
@@ -127,20 +133,28 @@ export class SorobanTransactionProcessor extends WorkerHost {
   }
 
   @OnWorkerEvent('failed')
-  async onFailed(job: Job<SorobanTransactionJobData> | undefined, error: Error) {
+  onFailed(job: Job<SorobanTransactionJobData> | undefined, error: Error) {
     if (job) {
-      this.logger.error(`Soroban transaction job failed permanently: ${job.id}`, {
-        transactionId: job.data.transactionId,
-        operation: job.data.operation,
-        error: error.message,
-        attempts: job.attemptsMade,
-      });
+      this.logger.error(
+        `Soroban transaction job failed permanently: ${job.id}`,
+        {
+          transactionId: job.data.transactionId,
+          operation: job.data.operation,
+          error: error.message,
+          attempts: job.attemptsMade,
+        },
+      );
 
-      this.metricsService.incrementCounter('soroban_transaction_job_failed_final', {
-        operation: job.data.operation,
-      });
+      this.metricsService.incrementCounter(
+        'soroban_transaction_job_failed_final',
+        {
+          operation: job.data.operation,
+        },
+      );
     } else {
-      this.logger.error(`Unknown Soroban transaction job failed: ${error.message}`);
+      this.logger.error(
+        `Unknown Soroban transaction job failed: ${error.message}`,
+      );
     }
   }
 
@@ -158,10 +172,13 @@ export class SorobanTransactionProcessor extends WorkerHost {
 
   @OnWorkerEvent('progress')
   onProgress(job: Job<SorobanTransactionJobData>, progress: number) {
-    this.logger.debug(`Soroban transaction job progress: ${job.id} - ${progress}%`, {
-      transactionId: job.data.transactionId,
-      operation: job.data.operation,
-      progress,
-    });
+    this.logger.debug(
+      `Soroban transaction job progress: ${job.id} - ${progress}%`,
+      {
+        transactionId: job.data.transactionId,
+        operation: job.data.operation,
+        progress,
+      },
+    );
   }
 }

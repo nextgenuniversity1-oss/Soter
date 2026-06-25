@@ -13,7 +13,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateClaimDto } from './dto/create-claim.dto';
 import { ClaimReceiptDto, SendReceiptShareDto } from './dto/claim-receipt.dto';
 import { ExportClaimsQueryDto } from './dto/export-claims.dto';
-import { ClaimStatus, Prisma, SorobanOperationType } from '@prisma/client';
+import {
+  ClaimStatus,
+  Prisma,
+  SorobanOperationType,
+  SorobanTransaction,
+} from '@prisma/client';
 import {
   OnchainAdapter,
   DisburseResult,
@@ -180,45 +185,49 @@ export class ClaimsService {
     }
 
     // Create Soroban transaction record with comprehensive lifecycle tracking
-    let sorobanTransaction;
+    let sorobanTransaction: SorobanTransaction | undefined;
     if (this.onchainEnabled && this.onchainAdapter) {
       const packageId = this.generateMockPackageId(id);
       const tokenAddress = this.getTokenAddressForClaim(claim);
       const correlationId = `disburse-${id}-${Date.now()}`;
 
       // Create transaction record in database with full lifecycle support
-      sorobanTransaction = await this.sorobanTransactionService.createTransaction({
-        claimId: id,
-        operation: SorobanOperationType.disburse_claim,
-        packageId,
-        operatorAddress: 'admin', // In production, get from authenticated context
-        recipientAddress: this.encryptionService.decrypt(claim.recipientRef),
-        amount: claim.amount.toString(),
-        tokenAddress,
-        correlationId,
-        metadata: {
-          campaignId: claim.campaignId,
-          claimAmount: claim.amount,
-          originalClaimStatus: claim.status,
-        },
-        maxAttempts: 5,
-      });
+      sorobanTransaction =
+        await this.sorobanTransactionService.createTransaction({
+          claimId: id,
+          operation: SorobanOperationType.disburse_claim,
+          packageId,
+          operatorAddress: 'admin', // In production, get from authenticated context
+          recipientAddress: this.encryptionService.decrypt(claim.recipientRef),
+          amount: claim.amount.toString(),
+          tokenAddress,
+          correlationId,
+          metadata: {
+            campaignId: claim.campaignId,
+            claimAmount: claim.amount,
+            originalClaimStatus: claim.status,
+          },
+          maxAttempts: 5,
+        });
 
       // Schedule for immediate execution with retry capabilities
       await this.sorobanTransactionScheduler.scheduleTransaction(
         sorobanTransaction.id,
-        { 
+        {
           correlationId,
           priority: 1, // High priority for disbursements
         },
       );
 
-      this.logger.log('Created Soroban transaction with lifecycle tracking for claim disbursement', {
-        claimId: id,
-        transactionId: sorobanTransaction.id,
-        packageId,
-        correlationId,
-      });
+      this.logger.log(
+        'Created Soroban transaction with lifecycle tracking for claim disbursement',
+        {
+          claimId: id,
+          transactionId: sorobanTransaction.id,
+          packageId,
+          correlationId,
+        },
+      );
 
       // Emit metrics for transaction creation
       this.metricsService.incrementCounter('soroban_disbursement_scheduled', {
@@ -235,10 +244,13 @@ export class ClaimsService {
       ClaimStatus.disbursed,
     );
 
-    this.logger.log(`Claim ${id} marked as disbursed with Soroban transaction tracking`, {
-      claimId: id,
-      sorobanTransactionId: sorobanTransaction?.id,
-    });
+    this.logger.log(
+      `Claim ${id} marked as disbursed with Soroban transaction tracking`,
+      {
+        claimId: id,
+        sorobanTransactionId: sorobanTransaction?.id,
+      },
+    );
 
     return updatedClaim;
   }

@@ -17,6 +17,7 @@ import { Step1Upload } from './Step1Upload';
 import { Step2Preview } from './Step2Preview';
 import { Step3Validation } from './Step3Validation';
 import { Step4Confirm } from './Step4Confirm';
+import { useNetworkGuard } from '@/hooks/useNetworkGuard';
 
 const steps: Array<{ id: WizardStep; title: string; description: string }> = [
   { id: 1, title: 'Upload', description: 'Select recipient CSV' },
@@ -31,6 +32,7 @@ interface ImportRecipientsWizardProps {
 
 export function ImportRecipientsWizard({ campaignId }: ImportRecipientsWizardProps) {
   const { toast } = useToast();
+  const { isMismatch } = useNetworkGuard();
   const [step, setStep] = useState<WizardStep>(1);
   const [file, setFile] = useState<File | null>(null);
   const [parsedData, setParsedData] = useState<ParsedCsvData | null>(null);
@@ -144,7 +146,7 @@ export function ImportRecipientsWizard({ campaignId }: ImportRecipientsWizardPro
   }
 
   async function handleConfirmImport() {
-    if (!file) {
+    if (isMismatch || !file) {
       return;
     }
 
@@ -263,17 +265,18 @@ export function ImportRecipientsWizard({ campaignId }: ImportRecipientsWizardPro
             )}
 
             {step === 4 && validationResult && (
-              <Step4Confirm
-                result={validationResult}
-                isSubmitting={isSubmitting}
-                hasBlockingErrors={hasBlockingErrors}
-                submitMessage={submitMessage}
-                submitError={submitError}
-                onBack={() => { setStep(3); announce('Step 3: Resolve validation issues'); }}
-                onConfirm={handleConfirmImport}
-                onStartOver={handleStartOver}
-                headingRef={stepHeadingRef}
-              />
+                <Step4Confirm
+                  result={validationResult}
+                  isSubmitting={isSubmitting}
+                  hasBlockingErrors={hasBlockingErrors}
+                  isMismatch={isMismatch}
+                  submitMessage={submitMessage}
+                  submitError={submitError}
+                  onBack={() => { setStep(3); announce('Step 3: Resolve validation issues'); }}
+                  onConfirm={handleConfirmImport}
+                  onStartOver={handleStartOver}
+                  headingRef={stepHeadingRef}
+                />
             )}
           </div>
 

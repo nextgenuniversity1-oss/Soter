@@ -3,6 +3,8 @@
 import React, { useId, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { X, AlertCircle } from 'lucide-react';
+import { useTranslations } from 'next-intl';
+import { useNetworkGuard } from '@/hooks/useNetworkGuard';
 import {
   useApproveVerification,
   useRejectVerification,
@@ -67,6 +69,9 @@ export function ReviewActionDialog({
   const [internalNote, setInternalNote] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  const { isMismatch, expectedNetwork } = useNetworkGuard();
+  const t = useTranslations();
+
   const approve = useApproveVerification();
   const reject = useRejectVerification();
   const resubmit = useRequestResubmission();
@@ -82,6 +87,11 @@ export function ReviewActionDialog({
 
   async function handleConfirm() {
     setError(null);
+
+    if (isMismatch) {
+      setError(t('wallet.submitBlocked'));
+      return;
+    }
 
     if (cfg.needsReason && !reason.trim()) {
       setError('A reason is required.');
@@ -240,7 +250,8 @@ export function ReviewActionDialog({
             </Dialog.Close>
             <button
               onClick={handleConfirm}
-              disabled={isPending}
+              disabled={isPending || isMismatch}
+              title={isMismatch ? t('wallet.networkMismatchShort', { expectedNetwork: expectedNetwork.toUpperCase() }) : undefined}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed ${cfg.confirmClass}`}
             >
               {isPending ? 'Saving…' : cfg.confirmLabel}

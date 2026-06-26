@@ -4,6 +4,8 @@ import {
   IsNumber,
   IsOptional,
   Min,
+  Matches,
+  IsDate,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -35,11 +37,35 @@ export class CreateClaimDto {
   @IsString()
   recipientRef: string;
 
+  @ApiProperty({
+    description:
+      'Stellar token address (asset issuer or contract ID) for the distribution',
+    example: 'GATEMHCCKCY67ZUCKTROYN24ZYT5GK4EQZ5LKG3FZTSZ3NYNEJBBENSN',
+  })
+  @IsNotEmpty()
+  @IsString()
+  @Matches(/^G[A-Z0-9]{55}$|^C[A-Z0-9]{55}$/, {
+    message:
+      'tokenAddress must be a valid Stellar address (G... or C... format)',
+  })
+  tokenAddress: string;
+
   @ApiPropertyOptional({
-    description: 'Reference or link to evidence supporting the claim (e.g., photo, document hash).',
+    description:
+      'Reference or link to evidence supporting the claim (e.g., photo, document hash).',
     example: 'evidence-456',
   })
   @IsOptional()
   @IsString()
   evidenceRef?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'When the claim should automatically expire if it remains unprocessed.',
+    example: '2026-05-31T23:59:59.000Z',
+  })
+  @IsOptional()
+  @Type(() => Date)
+  @IsDate()
+  expiresAt?: Date;
 }

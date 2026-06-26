@@ -2,6 +2,7 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bullmq';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
+import { ScheduleModule } from '@nestjs/schedule';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -17,10 +18,7 @@ import { AuditModule } from './audit/audit.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { JobsModule } from './jobs/jobs.module';
 import { RequestCorrelationMiddleware } from './middleware/request-correlation.middleware';
-import {
-  SecurityModule,
-  createRateLimiter,
-} from './common/security/security.module';
+import { SecurityModule } from './common/security/security.module';
 import { CampaignsModule } from './campaigns/campaigns.module';
 import { APP_GUARD } from '@nestjs/core';
 import { ApiKeyGuard } from './common/guards/api-key.guard';
@@ -30,6 +28,24 @@ import { ClaimsModule } from './claims/claims.module';
 import { LoggingInterceptor } from './interceptors/logging.interceptor';
 import { LoggerService } from './logger/logger.service';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
+import { AnalyticsModule } from './analytics/analytics.module';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { AidEscrowModule } from './onchain/aid-escrow.module';
+import { ApiKeysModule } from './api-keys/api-keys.module';
+import { SessionModule } from './session/session.module';
+import { CommonServicesModule } from './common/services/common-services.module';
+import { EvidenceModule } from './evidence/evidence.module';
+import { RetentionPolicyModule } from './retention-policy/retention-policy.module';
+import { InvitesModule } from './orgs/invites.module';
+import { AdminSearchModule } from './search/admin-search.module';
+import { EntityLinkingModule } from './entity-linking/entity-linking.module';
+import { DeploymentMetadataModule } from './deployment-metadata/deployment-metadata.module';
+import { RedisModule } from '@liaoliaots/nestjs-redis';
+import { AdaptiveRateLimitGuard } from './common/guards/adaptive-rate-limit.guard';
+import { DeprecationInterceptor } from './common/interceptors/deprecation.interceptor';
+import { SandboxModule } from './sandbox/sandbox.module';
+import { CacheModule } from './common/cache/cache.module';
+import { CacheResponseInterceptor } from './common/interceptors/cache-response.interceptor';
 
 @Module({
   imports: [
@@ -54,12 +70,29 @@ import { AllExceptionsFilter } from './common/filters/http-exception.filter';
           host: configService.get<string>('REDIS_HOST') ?? 'localhost',
           port: parseInt(configService.get<string>('REDIS_PORT') ?? '6379', 10),
         },
+        defaultJobOptions: {
+          attempts: 3,
+          backoff: {
+            type: 'exponential',
+            delay: 5000,
+          },
+          removeOnComplete: {
+            age: 3600, // keep for 1 hour
+            count: 1000,
+          },
+          removeOnFail: {
+            age: 24 * 3600, // keep for 24 hours
+            count: 5000,
+          },
+        },
       }),
       inject: [ConfigService],
     }),
+    ScheduleModule.forRoot(),
 
     LoggerModule,
     PrismaModule,
+    CacheModule,
     HealthModule,
     AidModule,
     VerificationModule,
@@ -71,6 +104,34 @@ import { AllExceptionsFilter } from './common/filters/http-exception.filter';
     ClaimsModule,
     NotificationsModule,
     JobsModule,
+    AnalyticsModule,
+    AidEscrowModule,
+    ApiKeysModule,
+    SessionModule,
+    CommonServicesModule,
+    EvidenceModule,
+    RetentionPolicyModule,
+    InvitesModule,
+    AdminSearchModule,
+    EntityLinkingModule,
+    DeploymentMetadataModule,
+    SandboxModule,
+    RedisModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => ({
+        config: {
+          host: configService.get<string>('REDIS_HOST') ?? 'localhost',
+          port: parseInt(configService.get<string>('REDIS_PORT') ?? '6379', 10),
+        },
+      }),
+      inject: [ConfigService],
+    }),
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60000, // 60 seconds window
+        limit: 20, // default: 20 req/min
+      },
+    ]),
   ],
 
   controllers: [AppController],
@@ -89,8 +150,20 @@ import { AllExceptionsFilter } from './common/filters/http-exception.filter';
       useClass: RolesGuard, // runs second — checks request.user.role against @Roles()
     },
     {
+      provide: APP_GUARD,
+      useClass: AdaptiveRateLimitGuard, // Adaptive rate limiting using Redis
+    },
+    {
       provide: APP_INTERCEPTOR,
       useClass: LoggingInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: DeprecationInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: CacheResponseInterceptor,
     },
   ],
 })
@@ -103,9 +176,6 @@ export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
     // Request correlation middleware
     consumer.apply(RequestCorrelationMiddleware).forRoutes('*');
-
-    // Rate limiter middleware
-    consumer.apply(createRateLimiter(this.configService)).forRoutes('*');
 
     // Startup log
     this.loggerService.log(

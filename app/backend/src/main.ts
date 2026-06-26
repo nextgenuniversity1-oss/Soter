@@ -44,7 +44,7 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
 
   // Security middleware (order matters)
-  app.use(createHelmetMiddleware());
+  app.use(createHelmetMiddleware(configService));
   app.use(createCorsOriginValidator(configService));
   app.enableCors(buildCorsOptions(configService));
   app.use(createRateLimiter(configService));
@@ -71,6 +71,7 @@ async function bootstrap() {
       transformOptions: {
         enableImplicitConversion: true,
       },
+      errorHttpStatusCode: 422,
     }),
   );
 
@@ -118,6 +119,15 @@ When new versions are released:
         description: 'Enter JWT token',
       },
       'JWT-auth',
+    )
+    .addApiKey(
+      {
+        type: 'apiKey',
+        name: 'x-api-key',
+        in: 'header',
+        description: 'API key for external access',
+      },
+      'api-key',
     )
     .addServer('http://localhost:3000/api/v1', 'Local Development (v1)')
     .addServer('https://api.pulsefy.dev/api/v1', 'Staging (v1)')

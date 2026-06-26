@@ -136,7 +136,213 @@ const aidPackagesHandler: MockHandler = async (url) => {
   });
 };
 
+let campaignIdCounter = 3;
+const campaignsStore: Array<{id:string; name:string; status:string; budget:number; metadata?:Record<string, unknown>; createdAt:string; updatedAt:string; archivedAt?: string | null;}> = [
+  {
+    id: '1',
+    name: 'Winter Relief 2026',
+    status: 'active',
+    budget: 25000,
+    metadata: { token: 'USDC', expiry: '2026-12-31' },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    archivedAt: null,
+  },
+  {
+    id: '2',
+    name: 'Medical Outreach',
+    status: 'paused',
+    budget: 15000,
+    metadata: { token: 'USDC', expiry: '2026-08-15' },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    archivedAt: null,
+  },
+];
+
+const campaignsHandler: MockHandler = async () => {
+  return new Response(
+    JSON.stringify({ success: true, data: campaignsStore, message: 'Campaigns fetched successfully' }),
+    {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }
+  );
+};
+
+const campaignCreateHandler: MockHandler = async (_url, options) => {
+  if (!options?.body) {
+    return new Response(JSON.stringify({ success: false, message: 'Request body missing' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  const payload = JSON.parse(options.body.toString());
+  const record = {
+    id: String(campaignIdCounter++),
+    name: payload.name,
+    status: payload.status ?? 'draft',
+    budget: payload.budget,
+    metadata: payload.metadata,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    archivedAt: null,
+  };
+
+  campaignsStore.unshift(record);
+
+  return new Response(JSON.stringify({ success: true, data: record, message: 'Campaign created successfully' }), {
+    status: 201,
+    headers: { 'Content-Type': 'application/json' },
+  });
+};
+
+const campaignUpdateHandler: MockHandler = async (url, options) => {
+  const urlParts = url.split('?')[0].split('/');
+  const id = urlParts[urlParts.length - 1];
+  const campaign = campaignsStore.find(item => item.id === id);
+
+  if (!campaign) {
+    return new Response(JSON.stringify({ success: false, message: 'Campaign not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  if (!options?.body) {
+    return new Response(JSON.stringify({ success: false, message: 'Request body missing' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  const payload = JSON.parse(options.body.toString());
+
+  if (payload.name !== undefined) campaign.name = payload.name;
+  if (payload.budget !== undefined) campaign.budget = payload.budget;
+  if (payload.status !== undefined) campaign.status = payload.status;
+  if (payload.metadata !== undefined) campaign.metadata = payload.metadata;
+  if (payload.status === 'archived') {
+    campaign.archivedAt = new Date().toISOString();
+  }
+
+  campaign.updatedAt = new Date().toISOString();
+
+  return new Response(JSON.stringify({ success: true, data: campaign, message: 'Campaign updated successfully' }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+};
+
+const recipientsImportValidateHandler: MockHandler = async (_url, options) => {
+  const body = options?.body;
+
+  if (!(body instanceof FormData)) {
+    return new Response(JSON.stringify({ success: false, message: 'Form data is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const file = body.get('file');
+  if (!(file instanceof File)) {
+    return new Response(JSON.stringify({ success: false, message: 'CSV file is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const csvText = await file.text();
+  const lines = csvText
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  const [headerLine, ...dataLines] = lines;
+  const headers = (headerLine ?? '')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean);
+
+  const normalizedHeaders = headers.map(header => header.toLowerCase().replace(/[_\s-]+/g, ''));
+  const nameIndex = normalizedHeaders.findIndex(header => ['name', 'fullname', 'recipientname'].includes(header));
+  const walletIndex = normalizedHeaders.findIndex(header => ['wallet', 'walletaddress', 'stellarwallet', 'publickey'].includes(header));
+  const phoneIndex = normalizedHeaders.findIndex(header => ['phone', 'phonenumber', 'mobile'].includes(header));
+
+  const rows = dataLines.map((line, index) => {
+    const values = line.split(',').map(value => value.trim());
+    const name = nameIndex >= 0 ? (values[nameIndex] ?? '') : '';
+    const wallet = walletIndex >= 0 ? (values[walletIndex] ?? '') : '';
+    const phone = phoneIndex >= 0 ? (values[phoneIndex] ?? '') : '';
+    const messages: Array<{ severity: 'warning' | 'error'; field?: string; message: string }> = [];
+
+    if (!name) {
+      messages.push({ severity: 'error', field: 'fullName', message: 'Recipient name is required.' });
+    }
+
+    if (!wallet) {
+      messages.push({ severity: 'error', field: 'wallet', message: 'Wallet address is required.' });
+    } else if (wallet.length < 10) {
+      messages.push({ severity: 'warning', field: 'wallet', message: 'Wallet address looks shorter than expected.' });
+    }
+
+    if (!phone) {
+      messages.push({ severity: 'warning', field: 'phone', message: 'Phone number is missing.' });
+    }
+
+    const status =
+      messages.some(message => message.severity === 'error')
+        ? 'error'
+        : messages.some(message => message.severity === 'warning')
+          ? 'warning'
+          : 'valid';
+
+    return {
+      rowNumber: index + 1,
+      status,
+      messages,
+    };
+  });
+
+  return new Response(JSON.stringify({ success: true, rows }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+};
+
+const recipientsImportConfirmHandler: MockHandler = async (_url, options) => {
+  const body = options?.body;
+
+  if (!(body instanceof FormData)) {
+    return new Response(JSON.stringify({ success: false, message: 'Form data is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const file = body.get('file');
+  if (!(file instanceof File)) {
+    return new Response(JSON.stringify({ success: false, message: 'CSV file is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  return new Response(JSON.stringify({ success: true, message: `Recipient import queued successfully for ${file.name}.` }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+};
+
 export const handlers: Record<string, MockHandler> = {
   '/health': healthHandler,
   '/aid-packages': aidPackagesHandler,
+  '/recipients/import/validate': recipientsImportValidateHandler,
+  '/recipients/import/confirm': recipientsImportConfirmHandler,
+  '/campaigns': async (url, options) => {
+    const method = options?.method?.toUpperCase() ?? 'GET';
+    if (method === 'POST') {
+      return campaignCreateHandler(url, options);
+    }
+    return campaignsHandler(url, options);
+  },
+  '/campaigns/:id': async (url, options) => {
+    const method = options?.method?.toUpperCase() ?? 'GET';
+    if (method === 'PATCH') {
+      return campaignUpdateHandler(url, options);
+    }
+    return new Response(JSON.stringify({ success: false, message: 'Method not implemented in mock' }), { status: 405, headers: { 'Content-Type': 'application/json' } });
+  },
 };

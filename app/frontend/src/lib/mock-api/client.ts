@@ -4,8 +4,10 @@ export async function fetchClient(
   input: RequestInfo | URL,
   init?: RequestInit
 ): Promise<Response> {
-  const useMocks = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+  const useMocks =
+    process.env.NEXT_PUBLIC_USE_MOCKS === "true" ||
+    !process.env.NEXT_PUBLIC_API_URL;
 
   const urlString = input.toString();
   
@@ -28,6 +30,13 @@ export async function fetchClient(
       // Simulate network delay
       await new Promise((resolve) => setTimeout(resolve, 500));
       return handler(urlString, init);
+    }
+
+    // Support dynamic campaign endpoints like /campaigns/:id
+    if (pathWithoutQuery.startsWith('/campaigns/') && handlers['/campaigns/:id']) {
+      console.log(`[Mock API] Intercepting dynamic campaign request to: ${urlString}`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return handlers['/campaigns/:id'](urlString, init);
     }
   }
 

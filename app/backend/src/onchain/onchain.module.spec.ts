@@ -7,6 +7,9 @@ import {
 } from './onchain.module';
 import { OnchainAdapter } from './onchain.adapter';
 import { MockOnchainAdapter } from './onchain.adapter.mock';
+import { SorobanAdapter } from './soroban.adapter';
+import { PrismaModule } from '../prisma/prisma.module';
+import { getQueueToken } from '@nestjs/bullmq';
 
 describe('OnchainModule', () => {
   let module: TestingModule;
@@ -17,11 +20,14 @@ describe('OnchainModule', () => {
       imports: [
         ConfigModule.forRoot({
           isGlobal: false,
-          envFilePath: false,
         }),
+        PrismaModule,
         OnchainModule,
       ],
-    }).compile();
+    })
+      .overrideProvider(getQueueToken('soroban-transactions'))
+      .useValue({ add: jest.fn() })
+      .compile();
 
     _configService = module.get<ConfigService>(ConfigService);
   });
@@ -78,12 +84,12 @@ describe('createOnchainAdapter', () => {
     expect(adapter).toBeInstanceOf(MockOnchainAdapter);
   });
 
-  it('should throw error when ONCHAIN_ADAPTER is soroban (not implemented)', () => {
+  it('should create SorobanAdapter when ONCHAIN_ADAPTER is soroban', () => {
     jest.spyOn(configService, 'get').mockReturnValue('soroban');
 
-    expect(() => createOnchainAdapter(configService)).toThrow(
-      'Soroban adapter not yet implemented. Use ONCHAIN_ADAPTER=mock',
-    );
+    const adapter = createOnchainAdapter(configService);
+
+    expect(adapter).toBeInstanceOf(SorobanAdapter);
   });
 
   it('should throw error when ONCHAIN_ADAPTER is unknown', () => {

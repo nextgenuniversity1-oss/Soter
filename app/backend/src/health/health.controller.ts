@@ -1,11 +1,18 @@
 import { Controller, Get, Req, Res, Version, HttpStatus } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiOkResponse, ApiServiceUnavailableResponse, ApiInternalServerErrorResponse } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiOkResponse,
+  ApiServiceUnavailableResponse,
+  ApiInternalServerErrorResponse,
+} from '@nestjs/swagger';
 import { Response } from 'express';
 import { RequestWithRequestId } from '../middleware/request-correlation.middleware';
 import { HealthService } from './health.service';
 import { LivenessResponse, ReadinessResponse } from './health.service';
 import { API_VERSIONS } from '../common/constants/api-version.constants';
 import { Public } from '../common/decorators/public.decorator';
+import { Throttle } from '@nestjs/throttler';
 
 @ApiTags('Health')
 @Controller('health')
@@ -14,6 +21,7 @@ export class HealthController {
 
   @Public()
   @Get()
+  @Throttle({ default: { ttl: 60, limit: 100 } }) // Limit to 100 requests per minute for this endpoint
   @Version(API_VERSIONS.V1)
   @ApiOperation({
     summary: 'Check system liveness and basic service metadata',
@@ -116,5 +124,26 @@ export class HealthController {
 
     // Throw an error to test exception handling
     throw new Error('This is a test error for logging demonstration');
+  }
+
+  @Get('onchain')
+  @Version(API_VERSIONS.V1)
+  @ApiOperation({
+    summary: 'On-chain contract health probe (internal use)',
+    description:
+      'Performs a read-only contract call to verify connectivity to Soroban RPC and contract functionality. Requires authentication.',
+  })
+  @ApiOkResponse({
+    description: 'On-chain health check completed successfully',
+  })
+  @ApiServiceUnavailableResponse({
+    description: 'On-chain health check failed',
+  })
+  async onchainHealth(@Res({ passthrough: true }) res: Response) {
+    const result = await this.healthService.checkOnchainContract();
+    if (result.status === 'down') {
+      res.status(HttpStatus.SERVICE_UNAVAILABLE);
+    }
+    return result;
   }
 }

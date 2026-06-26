@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { Logger, Inject } from '@nestjs/common';
 import { Job } from 'bullmq';
@@ -9,6 +9,9 @@ import {
 } from './interfaces/onchain-job.interface';
 import { ONCHAIN_ADAPTER_TOKEN, OnchainAdapter } from './onchain.adapter';
 
+import { DlqService } from '../jobs/dlq.service';
+import { MetricsService } from '../observability/metrics/metrics.service';
+
 @Processor('onchain', {
   concurrency: 1, // Usually sequential for blockchain transactions
 })
@@ -18,6 +21,8 @@ export class OnchainProcessor extends WorkerHost {
   constructor(
     @Inject(ONCHAIN_ADAPTER_TOKEN)
     private readonly onchainAdapter: OnchainAdapter,
+    private readonly dlqService: DlqService,
+    private readonly metricsService: MetricsService,
   ) {
     super();
   }
@@ -25,8 +30,14 @@ export class OnchainProcessor extends WorkerHost {
   async process(
     job: Job<OnchainJobData, OnchainJobResult, string>,
   ): Promise<OnchainJobResult> {
+    const startedAt = Date.now();
+    const operation = String(job.data.type);
+    const correlationSuffix = job.data.correlationId
+      ? ` [correlationId=${job.data.correlationId}]`
+      : '';
+
     this.logger.log(
-      `Processing onchain ${job.data.type} (attempt ${job.attemptsMade + 1})`,
+      `Processing onchain ${operation} (attempt ${job.attemptsMade + 1})${correlationSuffix}`,
     );
 
     try {
@@ -51,16 +62,50 @@ export class OnchainProcessor extends WorkerHost {
         throw new Error(`Onchain operation failed: ${String(job.data.type)}`);
       }
 
+      this.metricsService.recordContractCallLatency(
+        operation,
+        'success',
+        (Date.now() - startedAt) / 1000,
+      );
+
       return {
         success: true,
         transactionHash: result?.transactionHash,
         metadata: result?.metadata,
       };
     } catch (error) {
-      this.logger.error(
-        `Onchain job ${job.id} failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        error instanceof Error ? error.stack : undefined,
+      const errMessage =
+        error instanceof Error
+          ? error.message.toLowerCase()
+          : String(error).toLowerCase();
+      const isTransient =
+        errMessage.includes('timeout') ||
+        errMessage.includes('congestion') ||
+        errMessage.includes('rate limit') ||
+        errMessage.includes('too many requests') ||
+        errMessage.includes('tx_too_late');
+
+      if (isTransient) {
+        this.logger.warn(
+          `Onchain job ${job.id} encountered transient network/congestion error: ${error instanceof Error ? error.message : 'Unknown error'}. Relying on exponential backoff.`,
+        );
+      } else {
+        this.logger.error(
+          `Onchain job ${job.id} failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          error instanceof Error ? error.stack : undefined,
+        );
+      }
+      this.metricsService.recordContractCallLatency(
+        operation,
+        'failed',
+        (Date.now() - startedAt) / 1000,
       );
+      if (errMessage.includes('transaction') || errMessage.includes('tx_')) {
+        this.metricsService.incrementTxSubmissionFailure(
+          operation,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
       throw error;
     }
   }
@@ -71,9 +116,14 @@ export class OnchainProcessor extends WorkerHost {
   }
 
   @OnWorkerEvent('failed')
-  onFailed(job: Job<OnchainJobData> | undefined, error: Error) {
+  async onFailed(job: Job<OnchainJobData> | undefined, error: Error) {
     if (job) {
       this.logger.error(`Onchain job ${job.id} failed: ${error.message}`);
+      this.metricsService.incrementCallbackFailure(
+        'onchain_job',
+        error.message,
+      );
+      await this.dlqService.moveToDlq('onchain', job, error);
     } else {
       this.logger.error(`Onchain job failed: ${error.message}`);
     }

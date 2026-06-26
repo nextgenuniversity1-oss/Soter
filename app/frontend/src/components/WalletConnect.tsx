@@ -4,6 +4,10 @@ import React, { useEffect, useState, useCallback, useRef } from "react";
 import { isConnected, setAllowed, getAddress, getNetworkDetails } from "@stellar/freighter-api";
 import { useWalletStore } from "../lib/walletStore";
 import { useToast } from "./ToastProvider";
+import { ErrorInline } from "./ErrorInline";
+import { useNetworkGuard } from "../hooks/useNetworkGuard";
+import { buildExplorerUrl } from "../lib/explorer";
+import { ExternalLink } from "lucide-react";
 
 export const WalletConnect: React.FC = () => {
   const [loading, setLoading] = useState(false);
@@ -11,6 +15,7 @@ export const WalletConnect: React.FC = () => {
   const { publicKey, setPublicKey, network, setNetwork, disconnect } = useWalletStore();
   const [mounted, setMounted] = useState(false);
   const { toast } = useToast();
+  const { isMismatch } = useNetworkGuard();
 
   // Keep track of previous public key to avoid infinite toast loops and state updates
   const prevPublicKeyRef = useRef<string | null>(publicKey);
@@ -70,6 +75,7 @@ export const WalletConnect: React.FC = () => {
   }, [publicKey, setPublicKey, fetchNetwork, toast]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true);
     if (typeof window === "undefined" || !('FreighterApi' in window)) {
       console.warn("Freighter is not installed or available in the browser.");
@@ -138,19 +144,30 @@ export const WalletConnect: React.FC = () => {
       <div className="flex flex-col items-end space-y-1">
         <div className="flex items-center space-x-2">
           {network && (
-            <span className={`text-xs px-2 py-1 rounded-md border font-medium ${network.toUpperCase().includes("MAINNET") || network.toUpperCase().includes("PUBLIC")
-              ? "bg-green-900/30 text-green-400 border-green-800"
-              : "bg-yellow-900/30 text-yellow-500 border-yellow-700"
-              }`}>
+            <span className={`text-xs px-2 py-1 rounded-md border font-medium ${
+              isMismatch
+                ? "bg-red-900/40 text-red-300 border-red-700"
+                : network.toUpperCase().includes("MAINNET") || network.toUpperCase().includes("PUBLIC")
+                  ? "bg-green-900/30 text-green-400 border-green-800"
+                  : "bg-yellow-900/30 text-yellow-300 border-yellow-700"
+            }`}>
+              {isMismatch && <span aria-label="Network mismatch" title="Network mismatch">⚠ </span>}
               {network.toUpperCase()}
             </span>
           )}
-          <span className="text-white text-sm bg-gray-900 px-3 py-1 rounded-md border border-gray-700">
+          <a
+            href={buildExplorerUrl('address', publicKey)}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`View address ${publicKey.substring(0, 4)}...${publicKey.substring(publicKey.length - 4)} on Stellar explorer, opens in new tab`}
+            className="text-white text-sm bg-gray-900 hover:bg-gray-800 px-3 py-1 rounded-md border border-gray-700 hover:border-gray-600 transition flex items-center gap-1.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-900"
+          >
             {publicKey.substring(0, 4)}...{publicKey.substring(publicKey.length - 4)}
-          </span>
+            <ExternalLink size={12} aria-hidden="true" className="opacity-60" />
+          </a>
           <button
             onClick={handleDisconnect}
-            className="px-3 py-1 rounded-md bg-red-600/80 text-white text-sm hover:bg-red-700 transition"
+            className="px-3 py-1 rounded-md bg-red-600/80 text-white text-sm hover:bg-red-700 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
           >
             Disconnect
           </button>
@@ -163,12 +180,20 @@ export const WalletConnect: React.FC = () => {
     <div className="flex flex-col items-end space-y-2">
       <button
         onClick={connectWallet}
-        className="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 transition"
+        className="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
       >
         Connect Freighter Wallet
       </button>
       {error && (
-        <span className="text-red-400 text-xs max-w-xs text-right break-words">{error}</span>
+        <div className="w-full max-w-xs mt-2">
+          <ErrorInline 
+            error={error} 
+            category="wallet"
+            variant="banner"
+            onRetry={connectWallet}
+            onClose={() => setError(null)}
+          />
+        </div>
       )}
     </div>
   );
